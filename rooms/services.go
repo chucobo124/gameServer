@@ -7,23 +7,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"runtime/debug"
 	"strconv"
+
+	"github.com/gameserver/utils"
 
 	"github.com/gin-gonic/gin"
 )
-
-// type getRoomsResp struct {
-// 	ID         int           `json:"id"`
-// 	Name       string        `json:"name"`
-// 	LimitUsers int           `json:"limitUsers"`
-// 	Creator    string        `json:"creator"`
-// 	IsActive   bool          `json:"isActive"`
-// 	CreDate    string        `json:"creDate"`
-// 	UpdDate    string        `json:"updDate"`
-// 	Game       []interface{} `json:"game"`
-// 	User       []user        `json:"user"`
-// }
 
 type GetRoomsResp struct {
 	ID         int           `json:"id"`
@@ -56,7 +45,7 @@ func GetRooms(c *gin.Context) {
 
 	rs, err := getRooms(c)
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	}
 	// Convert Rooms Object to response
@@ -69,7 +58,7 @@ func GetRooms(c *gin.Context) {
 
 	user, err := getUserProfile(c, userID)
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	}
 
@@ -83,10 +72,10 @@ func GetRooms(c *gin.Context) {
 func PutRoom(c *gin.Context) {
 	roomID, err := strconv.Atoi(c.Param("room_id"))
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	} else if roomID == 0 {
-		returnErrorJSON(c, errors.New("The roomID is 0").Error())
+		utils.ReturnErrorJSON(c, errors.New("The roomID is 0").Error())
 		return
 	}
 
@@ -110,7 +99,7 @@ func PutRoom(c *gin.Context) {
 
 	err = c.BindJSON(reqForm)
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	}
 
@@ -136,30 +125,23 @@ func PutRoom(c *gin.Context) {
 	// Check room is exist?
 	req, err := http.NewRequest(http.MethodPost, putRoomPath, bytes.NewBuffer(jsonPutRoomReq))
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		returnErrorJSON(c, err.Error())
+		utils.ReturnErrorJSON(c, err.Error())
 		return
 	} else if resp.StatusCode != http.StatusOK {
-		returnErrorJSON(c, resp.Status)
+		utils.ReturnErrorJSON(c, resp.Status)
 		return
 	}
 
 	c.JSON(200, gin.H{
 		"message": "I want to join the room" + fmt.Sprint(roomID) + fmt.Sprint(
 			reqForm),
-	})
-}
-
-func returnErrorJSON(c *gin.Context, msg string) {
-	debug.PrintStack()
-	c.JSON(200, gin.H{
-		"error": msg,
 	})
 }
 
