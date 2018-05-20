@@ -10,38 +10,52 @@ import (
 	"strconv"
 
 	"github.com/gameserver/utils"
+	cache "github.com/patrickmn/go-cache"
 
 	"github.com/gin-gonic/gin"
 )
 
+// Room the room obj
+type Room struct {
+	Name         string `json:"name"`
+	CurrentUsers int    `json:"current_user"`
+	MaxUser      int    `json:"max_user"`
+}
+
+// RoomCache room cache
+type RoomCache struct {
+	ID    int `json:"id"`
+	Users []User
+}
+
+// GetRoomsResp obj
 type GetRoomsResp struct {
 	ID         int           `json:"id"`
 	Name       string        `json:"name"`
 	LimitUsers int           `json:"limitUsers"`
-	Creator    string        `json:"creator"`
+	Creator    int           `json:"creator"`
 	IsActive   bool          `json:"isActive"`
 	CreDate    string        `json:"creDate"`
 	UpdDate    string        `json:"updDate"`
 	Game       []interface{} `json:"game"`
-	User       []interface{} `json:"user"`
+	User       []User        `json:"user"`
 }
 
+// User obj
 type User struct {
-	Name  string `json:"name"`
-	Coins int    `json:"coins"`
+	ID   int     `json:"id"`
+	Name string  `json:"name"`
+	Coin float32 `json:"coin"`
 }
 
 const externalRoomPath = "https://myfistwebsite-204102.appspot.com/api/Rooms/"
 const externalUserPath = "https://myfistwebsite-204102.appspot.com/api/Users/"
 
+var client = http.Client{}
+
 // GetRooms Get Rooms Profile
 func GetRooms(c *gin.Context) {
 	userID := c.Query("user_id")
-	type room struct {
-		Name         string `json:"name"`
-		CurrentUsers int    `json:"current_user"`
-		MaxUser      int    `json:"max_user"`
-	}
 
 	rs, err := getRooms(c)
 	if err != nil {
@@ -50,7 +64,7 @@ func GetRooms(c *gin.Context) {
 	}
 	// Convert Rooms Object to response
 	roomsCount := len(rs)
-	rooms := make([]room, roomsCount)
+	rooms := make([]Room, roomsCount)
 	for i, r := range rs {
 		rooms[i].MaxUser = r.LimitUsers
 		rooms[i].Name = r.Name
@@ -138,6 +152,7 @@ func PutRoom(c *gin.Context) {
 		utils.ReturnErrorJSON(c, resp.Status)
 		return
 	}
+	defer resp.Body.Close()
 
 	c.JSON(200, gin.H{
 		"message": "I want to join the room" + fmt.Sprint(roomID) + fmt.Sprint(
@@ -145,8 +160,89 @@ func PutRoom(c *gin.Context) {
 	})
 }
 
+// JoinRoom save user into general cache
+func JoinRoom(caches *cache.Cache) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		roomID := c.Param("room_id")
+		userID := c.Query("user_id")
+		u, _ := strconv.Atoi(userID)
+		if r, ok := caches.Get(roomID); ok {
+			room := r.(*RoomCache)
+			// check User is exist?
+			var isUserExist bool
+			for _, user := range room.Users {
+				if user.ID == u {
+					isUserExist = true
+				}
+			}
+			if !isUserExist {
+				user, err := getUserProfile(c, userID)
+				if err != nil {
+					utils.ReturnErrorJSON(c, err.Error())
+					return
+				}
+				room.Users = append(room.Users, *user)
+				caches.Set(roomID, room, cache.DefaultExpiration)
+			}
+		}
+		c.JSON(200, nil)
+	}
+}
+
+// GetCurrentRoom get current room profile
+func GetCurrentRoom(caches *cache.Cache) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		roomID := c.Param("room_id")
+		if r, ok := caches.Get(roomID); ok {
+			c.JSON(200, gin.H{
+				"room": r,
+			})
+		} else {
+			if room, err := getCurrentRoom(c, roomID); err != nil {
+				utils.ReturnErrorJSON(c, err.Error())
+				return
+			} else {
+				rc := new(RoomCache)
+				rc.ID, _ = strconv.Atoi(roomID)
+				for _, user := range room.User {
+					rc.Users = append(rc.Users, user)
+				}
+				caches.Set(roomID, rc, cache.DefaultExpiration)
+				if room, ok := caches.Get(roomID); ok {
+					c.JSON(200, gin.H{
+						"room": room,
+					})
+				} else {
+					utils.ReturnErrorJSON(c, "Cache Dose Not save successful")
+				}
+			}
+		}
+	}
+}
+
+func getCurrentRoom(c *gin.Context, roomID string) (*GetRoomsResp, error) {
+	req, err := http.NewRequest(http.MethodGet, externalRoomPath+roomID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+	defer resp.Body.Close()
+
+	body, _ := ioutil.ReadAll(resp.Body)
+	getRoomResp := new(GetRoomsResp)
+	if err := json.Unmarshal(body, getRoomResp); err != nil {
+		return nil, err
+	}
+	return getRoomResp, nil
+}
+
 func getRooms(c *gin.Context) ([]GetRoomsResp, error) {
-	client := http.Client{}
 	req, err := http.NewRequest(http.MethodGet, externalRoomPath, nil)
 	if err != nil {
 		return nil, err
@@ -158,6 +254,7 @@ func getRooms(c *gin.Context) ([]GetRoomsResp, error) {
 	} else if resp.StatusCode != http.StatusOK {
 		return nil, errors.New(resp.Status)
 	}
+	defer resp.Body.Close()
 
 	body, _ := ioutil.ReadAll(resp.Body)
 	getRoomResp := make([]GetRoomsResp, 0)
@@ -168,7 +265,7 @@ func getRooms(c *gin.Context) ([]GetRoomsResp, error) {
 }
 
 func getUserProfile(c *gin.Context, userID string) (*User, error) {
-	client := http.Client{}
+
 	req, err := http.NewRequest(http.MethodGet, externalUserPath+userID, nil)
 	if err != nil {
 		return nil, err
@@ -180,10 +277,11 @@ func getUserProfile(c *gin.Context, userID string) (*User, error) {
 	} else if resp.StatusCode != http.StatusOK {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	body, _ := ioutil.ReadAll(resp.Body)
 	currentUser := new(User)
-	if err := json.Unmarshal(body, &currentUser); err != nil {
+	if err := json.Unmarshal(body, currentUser); err != nil {
 		return nil, err
 	}
 	return currentUser, nil
